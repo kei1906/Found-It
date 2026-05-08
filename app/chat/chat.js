@@ -1,15 +1,19 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation"; // Added useSearchParams
+import React, { useState, useEffect, useRef, Suspense } from "react"; // Added Suspense
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { ArrowLeft, Send, Loader2, User, Trash2 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { ArrowLeft, Send, Loader2, User } from "lucide-react";
+import { motion } from "framer-motion";
 import NavBar from "@/components/NavBar";
 import ItemPostModal from "@/components/ItemPostModal";
 
-export default function ChatPage() {
+/**
+ * 1. THE CONTENT COMPONENT
+ * We move all your logic here because it uses useSearchParams()
+ */
+function ChatContent() {
   const router = useRouter();
-  const searchParams = useSearchParams(); // To read the ?id= from the URL
+  const searchParams = useSearchParams(); 
   const [user, setUser] = useState(null);
   const [view, setView] = useState('list');
   const [selectedConversation, setSelectedConversation] = useState(null);
@@ -27,7 +31,6 @@ export default function ChatPage() {
     getUser(); 
   }, []);
 
-  // Sync ref with state
   useEffect(() => {
     selectedChatIdRef.current = selectedConversation?.id || null;
   }, [selectedConversation]);
@@ -38,8 +41,6 @@ export default function ChatPage() {
     }
   }, [messages]);
 
-  // --- NEW: Deep Linking Logic ---
-  // This effect runs whenever the list of conversations is loaded OR the URL ID changes
   useEffect(() => {
     const chatIdFromUrl = searchParams.get('id');
     if (chatIdFromUrl && conversations.length > 0) {
@@ -49,23 +50,18 @@ export default function ChatPage() {
       }
     }
   }, [searchParams, conversations]);
-  // -------------------------------
 
   const getUser = async () => {
     const { data: { user: authUser } } = await supabase.auth.getUser();
     if (authUser) {
       setUser(authUser);
-      await fetchConversations(authUser.id); // Wait for conversations to load
+      await fetchConversations(authUser.id); 
     }
     setLoading(false);
   };
 
-  /**
-   * REALTIME SUBSCRIPTION
-   */
   useEffect(() => {
     if (!user) return;
-
     const channel = supabase
       .channel('public-messages-realtime')
       .on(
@@ -82,10 +78,7 @@ export default function ChatPage() {
         }
       )
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [user]);
 
   const fetchConversations = async (userId) => {
@@ -136,13 +129,11 @@ export default function ChatPage() {
   const selectConversation = async (conv) => {
     setSelectedConversation(conv);
     setView('chat');
-    
     const { data: history, error } = await supabase
       .from('messages')
       .select('*')
       .eq('chat_id', conv.id)
       .order('created_at', { ascending: true });
-    
     if (!error) setMessages(history || []);
   };
 
@@ -150,7 +141,6 @@ export default function ChatPage() {
     if (!newMessage.trim() || !selectedConversation || !user) return;
     const content = newMessage.trim();
     setNewMessage("");
-
     const { data, error } = await supabase.from("messages").insert({
       sender_id: user.id,
       receiver_id: selectedConversation.otherUserId,
@@ -159,17 +149,13 @@ export default function ChatPage() {
       content,
       is_read: false
     }).select().single();
-
-    if (error) return;
-
-    if (data) {
+    if (!error && data) {
       setMessages((prev) => [...prev, data]);
       fetchConversations(user.id);
     }
   };
 
   const backToList = () => {
-    // Clear URL when going back
     router.push('/chat'); 
     setView('list');
     setSelectedConversation(null);
@@ -275,5 +261,21 @@ export default function ChatPage() {
       <ItemPostModal open={showPostModal} onClose={() => setShowPostModal(false)} onFileSelect={handleFileSelected} />
       {view === 'list' && <NavBar activePage="chat" onPlusClick={() => setShowPostModal(true)} />}
     </div>
+  );
+}
+
+/**
+ * 2. THE MAIN EXPORT (The Fix)
+ * We wrap the Content in a Suspense boundary so the build doesn't crash.
+ */
+export default function ChatPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+      </div>
+    }>
+      <ChatContent />
+    </Suspense>
   );
 }
